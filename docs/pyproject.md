@@ -881,6 +881,12 @@ This tells Poetry to include the specified file, relative to your project direct
 * On Windows the file is placed in the `Scripts/` directory.
 * On *nix system the file is placed in the `bin/` directory.
 
+Once installed, the file script can be run by name via `poetry run`, just like a console script:
+
+```bash
+poetry run my_executable
+```
+
 In its table form, the value of each script can contain a `reference` and `type`. The supported types are
 `console` and `file`. When the value is a string, it is inferred to be a `console` script.
 

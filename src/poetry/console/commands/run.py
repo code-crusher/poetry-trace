@@ -57,7 +57,14 @@ class RunCommand(EnvCommand):
 
         Otherwise (when an entry point script does not exist), ``sys.argv[0]`` is the
         script name only, i.e. ``poetry run foo`` has ``sys.argv == ['foo']``.
+
+        A script declared with ``type = "file"`` is not an entry point but a plain
+        executable file that is copied to the scripts directory as-is, so it is run
+        directly instead of being imported as ``module:callable``.
         """
+        if isinstance(script, dict) and script.get("type") == "file":
+            return self.run_file_script(script, args)
+
         for script_dir in self.env.script_dirs:
             script_path = script_dir / args[0]
             if WINDOWS:
@@ -70,7 +77,9 @@ class RunCommand(EnvCommand):
             self._warning_not_installed_script(args[0])
 
         if isinstance(script, dict):
-            script = script["callable"]
+            # Table entries either use the deprecated ``callable`` key or
+            # ``reference`` (with ``type = "console"``).
+            script = script.get("callable") or script["reference"]
 
         module, callable_ = script.split(":")
 
@@ -88,6 +97,36 @@ class RunCommand(EnvCommand):
         ]
 
         return self.env.execute(*cmd)
+
+    def run_file_script(self, script: dict[str, str], args: list[str]) -> int:
+        """Runs a file script defined in the section ``[tool.poetry.scripts]``.
+
+        File scripts (``type = "file"``) are copied to the environment's scripts
+        directory as-is when the project is installed, so they are executed directly
+        instead of being resolved to a ``module:callable`` pair.
+        """
+        script_name = args[0]
+
+        for script_dir in self.env.script_dirs:
+            script_path = script_dir / script_name
+            if script_path.exists():
+                return self.env.execute(str(script_path), *args[1:])
+
+        # If we reach this point, the script is not installed, so we fall back to
+        # the referenced file in the project.
+        script_path = self.poetry.file.path.parent / script["reference"]
+
+        if not script_path.exists():
+            self.line_error(f"<error>Command not found: <c1>{script_name}</c1></error>")
+            return 1
+
+        self._warning_not_installed_script(script_name)
+
+        try:
+            return self.env.execute(str(script_path), *args[1:])
+        except FileNotFoundError:
+            self.line_error(f"<error>Command not found: <c1>{script_name}</c1></error>")
+            return 1
 
     def _warning_not_installed_script(self, script: str) -> None:
         message = f"""\
