@@ -1992,3 +1992,63 @@ def test_add_poetry_dependencies_if_necessary(
             "allow-prereleases": True,
         }
     }
+
+
+def test_add_widens_union_constraint_that_pep_508_cannot_express(
+    project_factory: ProjectFactory,
+    repo: DummyRepository,
+    command_tester_factory: CommandTesterFactory,
+) -> None:
+    # https://github.com/python-poetry/poetry/issues/11101
+    pyproject_content = """\
+    [project]
+    name = "simple-project"
+    version = "1.2.3"
+    dependencies = []
+    """
+
+    poetry = project_factory(name="simple-project", pyproject_content=pyproject_content)
+
+    repo.add_package(get_package("lxml", "4.5.0"))
+    repo.add_package(get_package("lxml", "5.0.0"))
+
+    tester = command_tester_factory("add", poetry=poetry)
+    tester.execute('lxml@"^4.5.0 || ^5.0.0"')
+
+    updated_pyproject = poetry.file.read()
+    # PEP 508 has no disjunction, so the pre-release gate is widened away
+    assert updated_pyproject["project"]["dependencies"] == ["lxml (>=4.5.0,<6.0.0)"]
+
+
+def test_add_puts_unrepresentable_union_constraint_in_poetry_section_only(
+    project_factory: ProjectFactory,
+    repo: DummyRepository,
+    command_tester_factory: CommandTesterFactory,
+) -> None:
+    # https://github.com/python-poetry/poetry/issues/11101
+    pyproject_content = """\
+    [project]
+    name = "simple-project"
+    version = "1.2.3"
+    dependencies = []
+    """
+
+    poetry = project_factory(name="simple-project", pyproject_content=pyproject_content)
+
+    repo.add_package(get_package("cachy", "0.1.0"))
+    repo.add_package(get_package("cachy", "0.3.0"))
+
+    tester = command_tester_factory("add", poetry=poetry)
+    tester.execute('cachy@"^0.1 || ^0.3"')
+
+    updated_pyproject = poetry.file.read()
+    # writing this constraint to [project] would produce invalid metadata
+    assert updated_pyproject["project"]["dependencies"] == []
+    assert updated_pyproject["tool"]["poetry"]["dependencies"] == {
+        "cachy": "^0.1 || ^0.3"
+    }
+    assert (
+        "The constraint ^0.1 || ^0.3 for cachy cannot be represented in PEP 508"
+        " format. Adding it to [tool.poetry.dependencies] only."
+        in tester.io.fetch_error()
+    )

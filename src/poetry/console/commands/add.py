@@ -15,6 +15,7 @@ from poetry.core.packages.dependency_group import MAIN_GROUP
 
 from poetry.console.commands.init import InitCommand
 from poetry.console.commands.installer_command import InstallerCommand
+from poetry.utils.pep_508 import to_pep_508_if_possible
 
 
 if TYPE_CHECKING:
@@ -316,25 +317,45 @@ The add command adds required packages to your <comment>pyproject.toml</> and in
                 pep_section = (
                     project_section if use_project_section else groups_content[group]
                 )
-                try:
-                    index = project_dependency_names.index(canonical_constraint_name)
-                except ValueError:
-                    pep_section.append(dependency.to_pep_508())
+                pep_508 = to_pep_508_if_possible(dependency)
+                if pep_508 is None:
+                    # PEP 508 cannot express a disjunction ("||") of version
+                    # constraints, so this dependency can only be stored in the
+                    # tool.poetry section (which Poetry understands).
+                    section = (
+                        "[tool.poetry.dependencies]"
+                        if group == MAIN_GROUP
+                        else f"[tool.poetry.group.{group}.dependencies]"
+                    )
+                    self.line_error(
+                        f"<warning>The constraint <c1>{constraint}</c1> for"
+                        f" <c1>{constraint_name}</c1> cannot be represented in"
+                        " PEP 508 format. Adding it to"
+                        f" <c1>{section}</c1> only.</warning>"
+                    )
+                    poetry_constraint = constraint
                 else:
-                    pep_section[index] = dependency.to_pep_508()
+                    try:
+                        index = project_dependency_names.index(
+                            canonical_constraint_name
+                        )
+                    except ValueError:
+                        pep_section.append(pep_508)
+                    else:
+                        pep_section[index] = pep_508
 
-                # create a second constraint for tool.poetry.dependencies with keys
-                # that cannot be stored in the project section
-                poetry_constraint = Table.inline()
-                if not isinstance(constraint, str):
-                    for key in ["allow-prereleases", "develop", "source"]:
-                        if value := constraint.get(key):
-                            poetry_constraint[key] = value
-                    if poetry_constraint:
-                        # add marker related keys to avoid ambiguity
-                        for key in ["python", "platform"]:
+                    # create a second constraint for tool.poetry.dependencies with
+                    # keys that cannot be stored in the project section
+                    poetry_constraint = Table.inline()
+                    if not isinstance(constraint, str):
+                        for key in ["allow-prereleases", "develop", "source"]:
                             if value := constraint.get(key):
                                 poetry_constraint[key] = value
+                        if poetry_constraint:
+                            # add marker related keys to avoid ambiguity
+                            for key in ["python", "platform"]:
+                                if value := constraint.get(key):
+                                    poetry_constraint[key] = value
             else:
                 poetry_constraint = constraint
 

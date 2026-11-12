@@ -13,9 +13,11 @@ from cleo.helpers import option
 from poetry.core.constraints.version import Version
 
 from poetry.console.commands.env_command import EnvCommand
+from poetry.console.exceptions import PoetryRuntimeError
 from poetry.masonry.builders import BUILD_FORMATS
 from poetry.utils.helpers import remove_directory
 from poetry.utils.isolated_build import isolated_builder
+from poetry.utils.pep_508 import relax_metadata_constraints
 
 
 if TYPE_CHECKING:
@@ -56,6 +58,30 @@ class BuildHandler:
         target_dir: Path,
         config_settings: dict[str, Any],
     ) -> None:
+        # The installed poetry-core renders disjunctive constraints ("||") as
+        # invalid PEP 508, so relax them before the metadata is generated.
+        # Constraints that cannot be relaxed have to fail the build instead of
+        # silently producing a wheel that installers reject.
+        relaxed, unrepresentable = relax_metadata_constraints(self.poetry.package)
+        for before, after in relaxed:
+            self.io.write_error_line(
+                f"<warning>Widening <c1>{before}</c1> to <c1>{after}</c1>"
+                " because PEP 508 cannot express a disjunction of version"
+                " constraints.</warning>"
+            )
+        if unrepresentable:
+            message = (
+                "<error>Cannot build a package with dependencies that cannot be"
+                " represented in PEP 508 metadata:</error>"
+            )
+            for requirement in unrepresentable:
+                message += f"\n  - <c1>{requirement}</c1>"
+            message += (
+                "\nPEP 508 cannot express a disjunction (\"||\") of version"
+                " constraints. Use a single range or a list of exclusions instead."
+            )
+            raise PoetryRuntimeError(message)
+
         builder = BUILD_FORMATS[fmt]
 
         builder(

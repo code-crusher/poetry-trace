@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import tarfile
+import zipfile
 
 from typing import TYPE_CHECKING
 
@@ -302,3 +303,45 @@ def test_build_handler_build_isolated(
     handler.build(BuildOptions(clean=True, formats=["wheel"], output="dist"))
 
     assert mock_builder.build.call_count == 1
+
+
+def test_build_relaxes_union_constraint_that_pep_508_cannot_express(
+    tmp_tester: CommandTester, tmp_poetry: Poetry, tmp_project_path: Path
+) -> None:
+    # https://github.com/python-poetry/poetry/issues/11101
+    from poetry.core.packages.dependency import Dependency
+
+    tmp_poetry.package.add_dependency(Dependency("lxml", "^4.5.0 || ^5.0.0"))
+    shutil.rmtree(tmp_project_path / "dist")
+
+    tmp_tester.execute("--format wheel")
+
+    (wheel_file,) = (tmp_project_path / "dist").glob("*.whl")
+    with zipfile.ZipFile(wheel_file) as zf:
+        (metadata_path,) = [
+            name for name in zf.namelist() if name.endswith(".dist-info/METADATA")
+        ]
+        metadata = zf.read(metadata_path).decode()
+
+    # the invalid "||" is widened into a single range that is valid PEP 508
+    assert "Requires-Dist: lxml (>=4.5.0,<6.0.0)\n" in metadata
+    assert "Widening" in tmp_tester.io.fetch_error()
+
+
+def test_build_fails_for_union_constraint_that_pep_508_cannot_express(
+    tmp_tester: CommandTester, tmp_poetry: Poetry, tmp_project_path: Path
+) -> None:
+    # https://github.com/python-poetry/poetry/issues/11101
+    from poetry.core.packages.dependency import Dependency
+
+    from poetry.console.exceptions import PoetryRuntimeError
+
+    tmp_poetry.package.add_dependency(Dependency("cachy", "^0.1 || ^0.3"))
+    shutil.rmtree(tmp_project_path / "dist")
+
+    with pytest.raises(PoetryRuntimeError) as e:
+        tmp_tester.execute("--format wheel")
+
+    assert "cachy (>=0.1,<0.2 || >=0.3,<0.4)" in e.value.get_text()
+    # no artifact may be written that installers would reject
+    assert not list((tmp_project_path / "dist").glob("*.whl"))
