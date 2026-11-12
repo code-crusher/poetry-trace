@@ -679,6 +679,24 @@ def test_authenticator_matches_repository_by_whole_path_segments(
     assert (repository.name if repository else None) == expected
 
 
+@pytest.mark.parametrize("repo", [{"foo": {}}, {"foo": {"url": None}}])
+def test_authenticator_ignores_repository_without_url(
+    mock_config: Config,
+    caplog: LogCaptureFixture,
+    with_simple_keyring: None,
+) -> None:
+    authenticator = Authenticator(mock_config, NullIO())
+
+    assert not authenticator.configured_repositories
+
+    record = next(
+        r
+        for r in caplog.records
+        if r.message.startswith("Configuration of repository foo")
+    )
+    assert "no url is set" in record.message
+
+
 def test_authenticator_does_not_send_sibling_repository_credentials(
     config: Config, mock_remote: None, http: responses.RequestsMock
 ) -> None:

@@ -418,6 +418,13 @@ class Authenticator:
             self._configured_repositories = {}
             for repository_name in self._config.get("repositories", []):
                 url = self._config.get(["repositories", repository_name, "url"])
+                if not url:
+                    logger.warning(
+                        "Configuration of repository %s is ignored"
+                        " because no url is set for it.",
+                        repository_name,
+                    )
+                    continue
                 self._configured_repositories[repository_name] = (
                     AuthenticatorRepositoryConfig(repository_name, url)
                 )
